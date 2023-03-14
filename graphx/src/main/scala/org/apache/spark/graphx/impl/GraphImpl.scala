@@ -26,7 +26,7 @@ import org.apache.spark.storage.StorageLevel
 import org.apache.spark.graphx._
 import org.apache.spark.graphx.impl.GraphImpl._
 import org.apache.spark.graphx.util.BytecodeUtils
-
+import org.apache.spark.Logging
 
 /**
  * An implementation of [[org.apache.spark.graphx.Graph]] to support computation on graphs.
@@ -38,8 +38,8 @@ import org.apache.spark.graphx.util.BytecodeUtils
 class GraphImpl[VD: ClassTag, ED: ClassTag] protected (
     @transient val vertices: VertexRDD[VD],
     @transient val replicatedVertexView: ReplicatedVertexView[VD, ED])
-  extends Graph[VD, ED] with Serializable {
-
+  extends Graph[VD, ED] with Serializable with Logging {
+  val DEFAULT_DEGREE_CUTOFF : Int = 70
   /** Default constructor is provided to support serialization */
   protected def this() = this(null, null)
 
@@ -97,14 +97,18 @@ class GraphImpl[VD: ClassTag, ED: ClassTag] protected (
     partitionBy(partitionStrategy, edges.partitions.size)
   }
 
+  override def partitionBy(partitionStrategy: PartitionStrategy, numPartitions: Int)
+  : Graph[VD, ED] = {
+    partitionBy(partitionStrategy, numPartitions, DEFAULT_DEGREE_CUTOFF)
+  }
+
   override def partitionBy(
-      partitionStrategy: PartitionStrategy, numPartitions: Int): Graph[VD, ED] = {
+      partitionStrategy: PartitionStrategy, numPartitions: Int, degreeCutoff: Int = 100)
+        : Graph[VD, ED] = {
     val edTag = classTag[ED]
     val vdTag = classTag[VD]
-    val newEdges = edges.withPartitionsRDD(edges.map { e =>
-      val part: PartitionID = partitionStrategy.getPartition(e.srcId, e.dstId, numPartitions)
-      (part, (e.srcId, e.dstId, e.attr))
-    }
+    val newEdges = edges.withPartitionsRDD(
+      partitionStrategy.getPartitionedEdgeRDD(this, numPartitions, degreeCutoff)
       .partitionBy(new HashPartitioner(numPartitions))
       .mapPartitionsWithIndex( { (pid, iter) =>
         val builder = new EdgePartitionBuilder[ED, VD]()(edTag, vdTag)

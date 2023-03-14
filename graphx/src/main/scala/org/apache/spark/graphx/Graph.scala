@@ -148,6 +148,17 @@ abstract class Graph[VD: ClassTag, ED: ClassTag] protected () extends Serializab
   def partitionBy(partitionStrategy: PartitionStrategy, numPartitions: Int): Graph[VD, ED]
 
   /**
+    * Repartitions the edges in the graph according to `partitionStrategy`.
+    * @param partitionStrategy the partitioning strategy to use when partitioning the edges
+    * in the graph
+    * @param numPartitions the number of edge partitions in the new graph.
+    * @param degreeCutoff decides whether to chose vertex cut or edge cut
+    * @return
+    */
+  def partitionBy(partitionStrategy: PartitionStrategy, numPartitions: Int, degreeCutoff: Int)
+    : Graph[VD, ED]
+
+  /**
    * Transforms each vertex attribute in the graph using the map function.
    *
    * @note The new graph has the same structure.  As a consequence the underlying index structures
