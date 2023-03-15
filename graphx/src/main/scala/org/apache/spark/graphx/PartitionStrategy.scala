@@ -16,29 +16,33 @@
  */
 
 package org.apache.spark.graphx
+
 import scala.reflect.ClassTag
 import org.apache.spark.rdd.RDD
+import org.apache.spark.Logging
 
 /**
  * Represents the way edges are assigned to edge partitions based on their source and destination
  * vertex IDs.
  */
-trait PartitionStrategy extends Serializable {
+trait PartitionStrategy extends Serializable with Logging {
   /** Returns the partition number for a given edge. */
   def getPartition(src: VertexId, dst: VertexId, numParts: PartitionID): PartitionID
+
   def getPartitionedEdgeRDD[VD: ClassTag, ED: ClassTag](graph: Graph[VD, ED],
-    numPartitions: PartitionID, degreeCutoff: Int): RDD[(PartitionID, (VertexId, VertexId, ED))]
+                                                        numPartitions: PartitionID, degreeCutoff: Int): RDD[(PartitionID, (VertexId, VertexId, ED))]
 }
 
 /**
-  * Represents Default Partition Strategy
-  *
-  */
+ * Represents Default Partition Strategy
+ *
+ */
 trait DefaultPartitionStrategy extends PartitionStrategy {
   override def getPartitionedEdgeRDD[VD: ClassTag, ED: ClassTag](graph: Graph[VD, ED],
-    numPartitions: PartitionID, degreeCutoff: Int): RDD[(PartitionID, (VertexId, VertexId, ED))] = { graph.edges.map { e =>
-    val part: PartitionID = getPartition(e.srcId, e.dstId, numPartitions)
-    (part, (e.srcId, e.dstId, e.attr))
+                                                                 numPartitions: PartitionID, degreeCutoff: Int): RDD[(PartitionID, (VertexId, VertexId, ED))] = {
+    graph.edges.map { e =>
+      val part: PartitionID = getPartition(e.srcId, e.dstId, numPartitions)
+      (part, (e.srcId, e.dstId, e.attr))
     }
   }
 
@@ -61,22 +65,22 @@ object PartitionStrategy {
    * over 9 machines.  We can use the following sparse matrix representation:
    *
    * <pre>
-   *       __________________________________
-   *  v0   | P0 *     | P1       | P2    *  |
-   *  v1   |  ****    |  *       |          |
-   *  v2   |  ******* |      **  |  ****    |
-   *  v3   |  *****   |  *  *    |       *  |
-   *       ----------------------------------
-   *  v4   | P3 *     | P4 ***   | P5 **  * |
-   *  v5   |  *  *    |  *       |          |
-   *  v6   |       *  |      **  |  ****    |
-   *  v7   |  * * *   |  *  *    |       *  |
-   *       ----------------------------------
-   *  v8   | P6   *   | P7    *  | P8  *   *|
-   *  v9   |     *    |  *    *  |          |
-   *  v10  |       *  |      **  |  *  *    |
-   *  v11  | * <-E    |  ***     |       ** |
-   *       ----------------------------------
+   * __________________________________
+   * v0   | P0 *     | P1       | P2    *  |
+   * v1   |  ****    |  *       |          |
+   * v2   |  ******* |      **  |  ****    |
+   * v3   |  *****   |  *  *    |       *  |
+   * ----------------------------------
+   * v4   | P3 *     | P4 ***   | P5 **  * |
+   * v5   |  *  *    |  *       |          |
+   * v6   |       *  |      **  |  ****    |
+   * v7   |  * * *   |  *  *    |       *  |
+   * ----------------------------------
+   * v8   | P6   *   | P7    *  | P8  *   *|
+   * v9   |     *    |  *    *  |          |
+   * v10  |       *  |      **  |  *  *    |
+   * v11  | * <-E    |  ***     |       ** |
+   * ----------------------------------
    * </pre>
    *
    * The edge denoted by `E` connects `v11` with `v1` and is assigned to processor `P6`. To get the
@@ -124,7 +128,15 @@ object PartitionStrategy {
   case object EdgePartition1D extends DefaultPartitionStrategy {
     override def getPartition(src: VertexId, dst: VertexId, numParts: PartitionID): PartitionID = {
       val mixingPrime: VertexId = 1125899906842597L
-      (math.abs(src * mixingPrime) % numParts).toInt
+      val partitionId = (math.abs(src * mixingPrime) % numParts).toInt
+      partitionId
+    }
+  }
+
+  case object CustomPartition extends DefaultPartitionStrategy {
+    override def getPartition(src: VertexId, dst: VertexId, numParts: PartitionID): PartitionID = {
+      val partitionId = (src / 1000000).toInt
+      partitionId
     }
   }
 
@@ -164,159 +176,159 @@ object PartitionStrategy {
 
   case object HybridSrc extends DefaultPartitionStrategy {
     override def getPartitionedEdgeRDD[VD: ClassTag, ED: ClassTag](
-      graph: Graph[VD, ED], numPartitions: PartitionID, degreeCutoff: Int): RDD[(
-        PartitionID, (VertexId, VertexId, ED))] = {
-          val out_degrees = graph.edges.map(e => (e.srcId, (e.dstId, e.attr))).
-            join(graph.outDegrees.map(e => (e._1, e._2)))
-          out_degrees.map { e =>
-            var part: PartitionID = 0
-            val srcId = e._1
-            val dstId = e._2._1._1
-            val attr = e._2._1._2
-            val Degree = e._2._2
-            val mixingPrime: VertexId = 1125899906842597L
-            if (Degree > degreeCutoff) {
-              part = ((math.abs(dstId) * mixingPrime) % numPartitions).toInt
-            } else {
-              part = ((math.abs(srcId) * mixingPrime) % numPartitions).toInt
-            }
-            (part, (srcId, dstId, attr))
-          }
+                                                                    graph: Graph[VD, ED], numPartitions: PartitionID, degreeCutoff: Int): RDD[(
+      PartitionID, (VertexId, VertexId, ED))] = {
+      val out_degrees = graph.edges.map(e => (e.srcId, (e.dstId, e.attr))).
+        join(graph.outDegrees.map(e => (e._1, e._2)))
+      out_degrees.map { e =>
+        var part: PartitionID = 0
+        val srcId = e._1
+        val dstId = e._2._1._1
+        val attr = e._2._1._2
+        val Degree = e._2._2
+        val mixingPrime: VertexId = 1125899906842597L
+        if (Degree > degreeCutoff) {
+          part = ((math.abs(dstId) * mixingPrime) % numPartitions).toInt
+        } else {
+          part = ((math.abs(srcId) * mixingPrime) % numPartitions).toInt
+        }
+        (part, (srcId, dstId, attr))
+      }
     }
   }
 
   case object HybridDst extends DefaultPartitionStrategy {
     override def getPartitionedEdgeRDD[VD: ClassTag, ED: ClassTag](
-      graph: Graph[VD, ED], numPartitions: PartitionID, degreeCutoff: Int): RDD[(
-        PartitionID, (VertexId, VertexId, ED))] = {
-          val in_degrees = graph.edges.map(e => (e.dstId, (e.srcId, e.attr))).
-            join(graph.inDegrees.map(e => (e._1, e._2)))
-          in_degrees.map { e =>
-            var part: PartitionID = 0
-            val srcId = e._2._1._1
-            val dstId = e._1
-            val attr = e._2._1._2
-            val Degree = e._2._2
-            val mixingPrime: VertexId = 1125899906842597L
-            if (Degree > degreeCutoff) {
-              part = ((math.abs(srcId) * mixingPrime) % numPartitions).toInt
-            } else {
-              part = ((math.abs(dstId) * mixingPrime) % numPartitions).toInt
-            }
-            (part, (srcId, dstId, attr))
-          }
+                                                                    graph: Graph[VD, ED], numPartitions: PartitionID, degreeCutoff: Int): RDD[(
+      PartitionID, (VertexId, VertexId, ED))] = {
+      val in_degrees = graph.edges.map(e => (e.dstId, (e.srcId, e.attr))).
+        join(graph.inDegrees.map(e => (e._1, e._2)))
+      in_degrees.map { e =>
+        var part: PartitionID = 0
+        val srcId = e._2._1._1
+        val dstId = e._1
+        val attr = e._2._1._2
+        val Degree = e._2._2
+        val mixingPrime: VertexId = 1125899906842597L
+        if (Degree > degreeCutoff) {
+          part = ((math.abs(srcId) * mixingPrime) % numPartitions).toInt
+        } else {
+          part = ((math.abs(dstId) * mixingPrime) % numPartitions).toInt
+        }
+        (part, (srcId, dstId, attr))
+      }
     }
   }
 
   case object GreedySrc extends DefaultPartitionStrategy {
     override def getPartitionedEdgeRDD[VD: ClassTag, ED: ClassTag](
-      graph: Graph[VD, ED], numPartitions: PartitionID, degreeCutoff: Int): RDD[(
-        PartitionID, (VertexId, VertexId, ED))] = {
-          val mixingPrime: VertexId = 1125899906842597L
+                                                                    graph: Graph[VD, ED], numPartitions: PartitionID, degreeCutoff: Int): RDD[(
+      PartitionID, (VertexId, VertexId, ED))] = {
+      val mixingPrime: VertexId = 1125899906842597L
 
-          // Count the number of edges corresponding to each srcID.
-          val groupedSrc = graph.edges.map{e => (e.srcId, e.dstId)}.groupByKey
+      // Count the number of edges corresponding to each srcID.
+      val groupedSrc = graph.edges.map { e => (e.srcId, e.dstId) }.groupByKey
 
-          // Assuming initial random partitioning based on dstId
-          // Count the overlap for each SrcId with each Partition.
-          val srcEdgeCount = groupedSrc.map{ e =>
-            var srcOverlap = new Array[Long](numPartitions)
-            e._2.map{ dsts => srcOverlap((math.abs(dsts * mixingPrime) % numPartitions).toInt) += 1}
-            (e._1, srcOverlap)
+      // Assuming initial random partitioning based on dstId
+      // Count the overlap for each SrcId with each Partition.
+      val srcEdgeCount = groupedSrc.map { e =>
+        var srcOverlap = new Array[Long](numPartitions)
+        e._2.map { dsts => srcOverlap((math.abs(dsts * mixingPrime) % numPartitions).toInt) += 1 }
+        (e._1, srcOverlap)
+      }
+
+      // An array to capture the load on each partition
+      // as we greedily assign edges to different partitions
+      var current_load = new Array[Long](numPartitions)
+
+      val FinalSrcAssignment = srcEdgeCount.map { e =>
+        val src = e._1
+        val dst = e._2
+
+        // Randomly assign the src id to a partition.
+        var part: PartitionID = (math.abs(src * mixingPrime) % numPartitions).toInt
+
+        // Go over each partition and see with which partitions the neighbors of this vertex
+        // overlap the most. Also take into account that the partition doesn't get too heavy.
+        var mostOverlap: Double = dst.apply(part) - math.sqrt(1.0 * current_load(part))
+        for (cur <- 0 to numPartitions - 1) {
+          val overlap: Double = dst.apply(cur) - math.sqrt(1.0 * current_load(cur))
+          if (overlap > mostOverlap) {
+            part = cur
+            mostOverlap = overlap
           }
+        }
 
-          // An array to capture the load on each partition
-          // as we greedily assign edges to different partitions
-          var current_load = new Array[Long](numPartitions)
+        // All the edges associated with this source vertex is sent to partition choosen
+        // Hence we increase the edge count of this partition in the current load.
+        for (cur <- 0 to numPartitions - 1) {
+          current_load(part) += dst.apply(cur)
+        }
+        (src, part)
+      }
 
-          val FinalSrcAssignment = srcEdgeCount.map { e =>
-            val src = e._1
-            val dst = e._2
-
-            // Randomly assign the src id to a partition.
-            var part : PartitionID = (math.abs(src * mixingPrime) % numPartitions).toInt
-
-            // Go over each partition and see with which partitions the neighbors of this vertex
-            // overlap the most. Also take into account that the partition doesn't get too heavy.
-            var mostOverlap : Double = dst.apply(part) - math.sqrt(1.0*current_load(part))
-            for (cur <- 0 to numPartitions-1){
-              val overlap : Double = dst.apply(cur) - math.sqrt(1.0*current_load(cur))
-              if (overlap > mostOverlap){
-                part = cur
-                mostOverlap = overlap
-              }
-            }
-
-            // All the edges associated with this source vertex is sent to partition choosen
-            // Hence we increase the edge count of this partition in the current load.
-            for (cur <- 0 to numPartitions-1){
-              current_load(part) += dst.apply(cur)
-            }
-            (src, part)
-          }
-
-          // Join the found partition for each source to its edges.
-          val PartitionedRDD = (graph.edges.map {e => (e.srcId, (e.dstId , e.attr))}).
-            join(FinalSrcAssignment.map{ e => (e._1 , e._2)})
-          PartitionedRDD.map { e =>
-            (e._2._2, (e._1, e._2._1._1, e._2._1._2))
-          }
+      // Join the found partition for each source to its edges.
+      val PartitionedRDD = (graph.edges.map { e => (e.srcId, (e.dstId, e.attr)) }).
+        join(FinalSrcAssignment.map { e => (e._1, e._2) })
+      PartitionedRDD.map { e =>
+        (e._2._2, (e._1, e._2._1._1, e._2._1._2))
+      }
     }
   }
 
   case object GreedyDst extends DefaultPartitionStrategy {
     override def getPartitionedEdgeRDD[VD: ClassTag, ED: ClassTag](
-      graph: Graph[VD, ED], numPartitions: PartitionID, degreeCutoff: Int): RDD[(
-        PartitionID, (VertexId, VertexId, ED))] = {
-          val mixingPrime: VertexId = 1125899906842597L
+                                                                    graph: Graph[VD, ED], numPartitions: PartitionID, degreeCutoff: Int): RDD[(
+      PartitionID, (VertexId, VertexId, ED))] = {
+      val mixingPrime: VertexId = 1125899906842597L
 
-          // Count the number of edges corresponding to each dstID.
-          val groupedDst = graph.edges.map{e => (e.dstId, e.srcId)}.groupByKey
+      // Count the number of edges corresponding to each dstID.
+      val groupedDst = graph.edges.map { e => (e.dstId, e.srcId) }.groupByKey
 
-          // Assuming initial random partitioning based on srcId
-          // Count the overlap for each DstId with each Partition.
-          val dstEdgeCount = groupedDst.map{ e =>
-            var dstOverlap = new Array[Long](numPartitions)
-            e._2.map{ srcs => dstOverlap((math.abs(srcs * mixingPrime) % numPartitions).toInt) += 1}
-            (e._1, dstOverlap)
+      // Assuming initial random partitioning based on srcId
+      // Count the overlap for each DstId with each Partition.
+      val dstEdgeCount = groupedDst.map { e =>
+        var dstOverlap = new Array[Long](numPartitions)
+        e._2.map { srcs => dstOverlap((math.abs(srcs * mixingPrime) % numPartitions).toInt) += 1 }
+        (e._1, dstOverlap)
+      }
+
+      // An array to capture the load on each partition
+      // as we greedily assign edges to different partitions
+      var current_load = new Array[Long](numPartitions)
+
+      val FinalDstAssignment = dstEdgeCount.map { e =>
+        val dst = e._1
+        val src = e._2
+
+        // Randomly assign the destination id to a partition.
+        var part: PartitionID = (math.abs(dst * mixingPrime) % numPartitions).toInt
+
+        // Go over each partition and see with which partitions the neighbors of this vertex
+        // overlap the most. Also take into account that the partition doesn't get too heavy.
+        var mostOverlap: Double = src.apply(part) - math.sqrt(1.0 * current_load(part))
+        for (cur <- 0 to numPartitions - 1) {
+          val overlap: Double = src.apply(cur) - math.sqrt(1.0 * current_load(cur))
+          if (overlap > mostOverlap) {
+            part = cur
+            mostOverlap = overlap
           }
+        }
 
-          // An array to capture the load on each partition
-          // as we greedily assign edges to different partitions
-          var current_load = new Array[Long](numPartitions)
+        // All the edges associated with this destination vertex is sent to partition choosen
+        // Hence we increase the edge count of this partition in the current load.
+        for (cur <- 0 to numPartitions - 1) {
+          current_load(part) += src.apply(cur)
+        }
+        (dst, part)
+      }
 
-          val FinalDstAssignment = dstEdgeCount.map { e =>
-            val dst = e._1
-            val src = e._2
-
-            // Randomly assign the destination id to a partition.
-            var part : PartitionID = (math.abs(dst * mixingPrime) % numPartitions).toInt
-
-            // Go over each partition and see with which partitions the neighbors of this vertex
-            // overlap the most. Also take into account that the partition doesn't get too heavy.
-            var mostOverlap : Double = src.apply(part) - math.sqrt(1.0*current_load(part))
-            for (cur <- 0 to numPartitions-1){
-              val overlap : Double = src.apply(cur) - math.sqrt(1.0*current_load(cur))
-              if (overlap > mostOverlap){
-                part = cur
-                mostOverlap = overlap
-              }
-            }
-
-            // All the edges associated with this destination vertex is sent to partition choosen
-            // Hence we increase the edge count of this partition in the current load.
-            for (cur <- 0 to numPartitions-1){
-              current_load(part) += src.apply(cur)
-            }
-            (dst, part)
-          }
-
-          // Join the found partition for each destination to its edges.
-          val PartitionedRDD = (graph.edges.map {e => (e.dstId, (e.srcId , e.attr))}).
-            join(FinalDstAssignment.map{ e => (e._1 , e._2)})
-          PartitionedRDD.map { e =>
-            (e._2._2, (e._2._1._1, e._1, e._2._1._2))
-          }
+      // Join the found partition for each destination to its edges.
+      val PartitionedRDD = (graph.edges.map { e => (e.dstId, (e.srcId, e.attr)) }).
+        join(FinalDstAssignment.map { e => (e._1, e._2) })
+      PartitionedRDD.map { e =>
+        (e._2._2, (e._2._1._1, e._1, e._2._1._2))
+      }
     }
   }
 
@@ -324,6 +336,7 @@ object PartitionStrategy {
   /** Returns the PartitionStrategy with the specified name. */
   def fromString(s: String): PartitionStrategy = s match {
     case "RandomVertexCut" => RandomVertexCut
+    case "CustomPartition" => CustomPartition
     case "EdgePartition1D" => EdgePartition1D
     case "EdgePartition1DByDst" => EdgePartition1DByDst
     case "EdgePartition2D" => EdgePartition2D
